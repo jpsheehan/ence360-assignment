@@ -1,2 +1,12 @@
-/bin/*
+# Don't include the bin directory
+/bin
+
+# Don't include the object files
 /src/*.o
+/test/*.o
+
+# Don't include the binaries
+/downloader
+/http_download
+/http_test
+/queue_test
