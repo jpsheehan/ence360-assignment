@@ -2,6 +2,7 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <netdb.h>
 #include <string.h>
 #include <unistd.h>
@@ -10,16 +11,6 @@
 #include "http.h"
 
 #define BUF_SIZE 1024
-
-#define HEADER_USER_AGENT "ENCE360/1.0 (assignment)"
-
-enum http_method
-{
-    GET,
-    POST,
-    HEAD
-};
-typedef enum http_method HttpMethod;
 
 /**
  * Creates a buffer with size t_initial_size bytes.
@@ -59,6 +50,10 @@ int buffer_double_size(Buffer *t_buffer)
     if (new_data != t_buffer->data)
     {
         t_buffer->data = new_data;
+
+        // initialise the new memory to 0
+        memset(t_buffer->data + t_buffer->length, 0, t_buffer->length);
+
         t_buffer->length = new_length;
         return 0;
     }
@@ -68,9 +63,125 @@ int buffer_double_size(Buffer *t_buffer)
     }
 }
 
-Buffer *http_raw_query(char *host, char *path, HttpMethod method, const char *range, int port)
+/**
+ * Allocates memory for a null-terminated string containing the request. The
+ * string must be freed manually.
+ * Returns NULL upon failure.
+ */
+Buffer *util_create_request(const char *t_path)
 {
-    assert(0 && "not implemented yet!");
+    // "GET" + " " + $PATH + " " + "HTTP/1.0" + "\r\n" + "\r\n" + "\0"
+    size_t length = 3 + 1 + strlen(t_path) + 1 + 8 + 2 + 2 + 1;
+    Buffer *buffer = buffer_create(length);
+
+    if (buffer != NULL)
+    {
+        snprintf(buffer->data, length, "GET %s HTTP/1.0\r\n\r\n", t_path);
+    }
+
+    return buffer;
+}
+
+/**
+ * Creates and returns a client socket. Based on https://gist.github.com/browny/5211329
+ * Returns -1 upon failure.
+ */
+int util_create_socket(const char *t_host, int t_port)
+{
+    int sockfd = 0;
+
+    // attempt to create the socket
+    if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) >= 0)
+    {
+        struct sockaddr_in serv_addr;
+        serv_addr.sin_family = AF_INET;
+        serv_addr.sin_port = htons(t_port);
+
+        if (inet_pton(AF_INET, t_host, &serv_addr.sin_addr) >= 0)
+        {
+            if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) >= 0)
+            {
+                return sockfd;
+            }
+        }
+    }
+
+    return -1;
+}
+
+/**
+ * Writes an entire buffer to the socket.
+ * Returns the number of bytes written or -1 upon failure.
+ */
+int util_write_buffer_to_socket(const Buffer *t_buffer, int t_socket)
+{
+    size_t data_written = 0;
+    while (data_written < t_buffer->length)
+    {
+        size_t written_this_iteration = 0;
+        written_this_iteration += write(t_socket,
+                                        t_buffer->data + data_written,
+                                        t_buffer->length - data_written);
+
+        // check for errors
+        if (written_this_iteration == -1)
+        {
+            return -1;
+        }
+
+        data_written += written_this_iteration;
+    }
+
+    return data_written;
+}
+
+/**
+ * Reads the socket, storing its contents inside the buffer. The buffer will be
+ * reallocated until all the data is read.
+ * Returns 0 on success or -1 upon failure.
+ */
+int util_read_buffer_from_socket(Buffer *t_buffer, int t_socket)
+{
+    size_t data_read = 0, data_read_this_iteration;
+
+    while (true)
+    {
+        data_read_this_iteration = read(t_socket,
+                                        t_buffer->data,
+                                        t_buffer->length - data_read);
+
+        // check if an error occurred
+        if (data_read_this_iteration == -1)
+        {
+            return -1;
+        }
+        else
+        {
+            // check if we are finished reading data
+            if (data_read_this_iteration == 0)
+            {
+                break;
+            }
+            else
+            {
+                // we have more data to read
+                data_read += data_read_this_iteration;
+
+                // check if we need to reallocate more space for the response
+                if (t_buffer->length - data_read == 0)
+                {
+
+                    // allocate more space and check for errors
+                    if (buffer_double_size(t_buffer) == -1)
+                    {
+                        return -1;
+                    }
+                }
+            }
+        }
+    }
+
+    return data_read;
 }
 
 /**
@@ -88,7 +199,40 @@ Buffer *http_raw_query(char *host, char *path, HttpMethod method, const char *ra
  */
 Buffer *http_query(char *host, char *page, const char *range, int port)
 {
-    return http_raw_query(host, page, GET, range, port);
+    Buffer *res_buf = NULL, *req_buf = NULL;
+    int socket = 0;
+
+    // attempt to create the response buffer
+    if ((res_buf = buffer_create(BUF_SIZE)) != NULL)
+    {
+        // attempt to create the request buffer
+        if ((req_buf = util_create_request((const char *)page)) != NULL)
+        {
+            // attempt to create the socket
+            if ((socket = util_create_socket(host, port)) != -1)
+            {
+                // attempt to send the buffer down the socket
+                if (util_write_buffer_to_socket(req_buf, socket) != -1)
+                {
+                    printf("Data sent ok\n");
+
+                    // attempt to read the data into the buffer
+                    if (util_read_buffer_from_socket(res_buf, socket) != -1)
+                    {
+                        printf("Data received ok\n%s\n", res_buf->data);
+                    }
+                }
+
+                // close the socket
+                close(socket);
+            }
+
+            // free the request buffer
+            buffer_free(req_buf);
+        }
+    }
+
+    return res_buf;
 }
 
 /**
