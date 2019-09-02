@@ -23,15 +23,18 @@ Content:
 </CUSTOMER>
 */
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
 
-    if (argc != 3) {
+    if (argc != 3)
+    {
         fprintf(stderr, "usage: ./http_test host page\n");
         exit(1);
     }
 
     Buffer *response = http_query(argv[1], argv[2], "", 80);
-    if (response) {
+    if (response)
+    {
         char *content = http_get_content(response);
         int header_length = content - response->data;
 
@@ -39,6 +42,10 @@ int main(int argc, char **argv) {
         printf("Content:\n%s\n", content);
 
         buffer_free(response);
+    }
+    else
+    {
+        printf("buffer is null\n");
     }
 
     return 0;

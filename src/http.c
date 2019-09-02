@@ -93,17 +93,39 @@ int util_create_socket(const char *t_host, int t_port)
     // attempt to create the socket
     if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) >= 0)
     {
-        struct sockaddr_in serv_addr;
-        serv_addr.sin_family = AF_INET;
-        serv_addr.sin_port = htons(t_port);
+        struct addrinfo hints;
+        struct addrinfo *serv_addr = NULL;
+        char port_str[20];
+        int n;
 
-        if (inet_pton(AF_INET, t_host, &serv_addr.sin_addr) >= 0)
+        n = snprintf(port_str, 20, "%d", t_port);
+        if ((n < 0) || (n >= 20))
         {
-            if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) >= 0)
-            {
-                return sockfd;
-            }
+            fprintf(stderr, "Could not convert port\n");
+            return -1;
         }
+
+        memset(&hints, 0, sizeof(struct addrinfo));
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+
+        if (getaddrinfo(t_host, port_str, &hints, &serv_addr) != 0)
+        {
+            fprintf(stderr, "Couldn't get addrinfo from inet_pton or getaddrinfo\n");
+        };
+
+        if (connect(sockfd, serv_addr->ai_addr, serv_addr->ai_addrlen) >= 0)
+        {
+            return sockfd;
+        }
+        else
+        {
+            fprintf(stderr, "Could not convert IP address to binary form\n");
+        }
+    }
+    else
+    {
+        fprintf(stderr, "Could not create TCP/IP socket\n");
     }
 
     return -1;
@@ -155,28 +177,24 @@ int util_read_buffer_from_socket(Buffer *t_buffer, int t_socket)
         {
             return -1;
         }
-        else
+
+        // check if we are finished reading data
+        if (data_read_this_iteration == 0)
         {
-            // check if we are finished reading data
-            if (data_read_this_iteration == 0)
-            {
-                break;
-            }
-            else
-            {
-                // we have more data to read
-                data_read += data_read_this_iteration;
+            return data_read;
+        }
 
-                // check if we need to reallocate more space for the response
-                if (t_buffer->length - data_read == 0)
-                {
+        // we have more data to read
+        data_read += data_read_this_iteration;
 
-                    // allocate more space and check for errors
-                    if (buffer_double_size(t_buffer) == -1)
-                    {
-                        return -1;
-                    }
-                }
+        // check if we need to reallocate more space for the response
+        if (t_buffer->length - data_read == 0)
+        {
+
+            // allocate more space and check for errors
+            if (buffer_double_size(t_buffer) == -1)
+            {
+                return -1;
             }
         }
     }
@@ -203,34 +221,55 @@ Buffer *http_query(char *host, char *page, const char *range, int port)
     int socket = 0;
 
     // attempt to create the response buffer
-    if ((res_buf = buffer_create(BUF_SIZE)) != NULL)
+    if ((res_buf = buffer_create(BUF_SIZE)) == NULL)
     {
-        // attempt to create the request buffer
-        if ((req_buf = util_create_request((const char *)page)) != NULL)
-        {
-            // attempt to create the socket
-            if ((socket = util_create_socket(host, port)) != -1)
-            {
-                // attempt to send the buffer down the socket
-                if (util_write_buffer_to_socket(req_buf, socket) != -1)
-                {
-                    printf("Data sent ok\n");
-
-                    // attempt to read the data into the buffer
-                    if (util_read_buffer_from_socket(res_buf, socket) != -1)
-                    {
-                        printf("Data received ok\n%s\n", res_buf->data);
-                    }
-                }
-
-                // close the socket
-                close(socket);
-            }
-
-            // free the request buffer
-            buffer_free(req_buf);
-        }
+        fprintf(stderr, "Could not create res_buf\n");
+        return NULL;
     }
+    // attempt to create the request buffer
+    if ((req_buf = util_create_request((const char *)page)) == NULL)
+    {
+        fprintf(stderr, "Could not create req_buf\n");
+        buffer_free(res_buf);
+        return NULL;
+    }
+
+    // attempt to create the socket
+    if ((socket = util_create_socket(host, port)) == -1)
+    {
+        fprintf(stderr, "Could not create socket to connect to http://%s:%d/\n", host, port);
+        buffer_free(req_buf);
+        buffer_free(res_buf);
+        return NULL;
+    }
+
+    // attempt to send the buffer down the socket
+    if (util_write_buffer_to_socket(req_buf, socket) == -1)
+    {
+        fprintf(stderr, "Could not write req_buf to socket\n");
+        close(socket);
+        buffer_free(req_buf);
+        buffer_free(res_buf);
+        return NULL;
+    }
+
+    printf("Data sent ok\n");
+
+    // attempt to read the data into the buffer
+    if (util_read_buffer_from_socket(res_buf, socket) != -1)
+    {
+        printf("Data received ok\n%s\n", res_buf->data);
+    }
+    else
+    {
+        fprintf(stderr, "Could not read socket into res_buf\n");
+    }
+
+    // close the socket
+    close(socket);
+
+    // free the request buffer
+    buffer_free(req_buf);
 
     return res_buf;
 }
