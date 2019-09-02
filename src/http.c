@@ -47,7 +47,9 @@ int buffer_double_size(Buffer *t_buffer)
     size_t new_length = t_buffer->length * 2;
     char *new_data = realloc(t_buffer->data, new_length);
 
-    if (new_data != t_buffer->data)
+    printf("Realloc'ing from %lu to %lu...\n", t_buffer->length, new_length);
+
+    if (new_data != NULL)
     {
         t_buffer->data = new_data;
 
@@ -59,6 +61,7 @@ int buffer_double_size(Buffer *t_buffer)
     }
     else
     {
+        fprintf(stderr, "New data points to %p, not %p\n", new_data, &t_buffer->data);
         return -1;
     }
 }
@@ -68,15 +71,15 @@ int buffer_double_size(Buffer *t_buffer)
  * string must be freed manually.
  * Returns NULL upon failure.
  */
-Buffer *util_create_request(const char *t_path)
+Buffer *util_create_request(const char *t_host, const char *t_path)
 {
     // "GET" + " " + $PATH + " " + "HTTP/1.0" + "\r\n" + "\r\n" + "\0"
-    size_t length = 3 + 1 + strlen(t_path) + 1 + 8 + 2 + 2 + 1;
+    size_t length = 3 + 1 + strlen(t_path) + 1 + 8 + 2 + 6 + strlen(t_host) + 2 + 2 + 1;
     Buffer *buffer = buffer_create(length);
 
     if (buffer != NULL)
     {
-        snprintf(buffer->data, length, "GET %s HTTP/1.0\r\n\r\n", t_path);
+        snprintf(buffer->data, length, "GET %s HTTP/1.0\r\nHost: %s\r\n\r\n", t_path, t_host);
     }
 
     return buffer;
@@ -194,6 +197,7 @@ int util_read_buffer_from_socket(Buffer *t_buffer, int t_socket)
             // allocate more space and check for errors
             if (buffer_double_size(t_buffer) == -1)
             {
+                fprintf(stderr, "Failed to double buffer size from %lu to %lu\n", t_buffer->length, t_buffer->length * 2);
                 return -1;
             }
         }
@@ -227,7 +231,7 @@ Buffer *http_query(char *host, char *page, const char *range, int port)
         return NULL;
     }
     // attempt to create the request buffer
-    if ((req_buf = util_create_request((const char *)page)) == NULL)
+    if ((req_buf = util_create_request(host, (const char *)page)) == NULL)
     {
         fprintf(stderr, "Could not create req_buf\n");
         buffer_free(res_buf);
